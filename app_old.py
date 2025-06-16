@@ -1,0 +1,936 @@
+"""
+Туристически чатбот за екопътеки в България - Рефакторирана версия
+
+Това приложение представлява интелигентен асистент за туристи, който помага
+при откриването и планирането на маршрути по екопътеки в България.
+Използва Flask за уеб интерфейса и OpenAI GPT модел за генериране на отговори.
+
+Автор: EcoTrails Team
+Дата: 2025
+Версия: 2.2 (Финална актуализация)
+"""
+
+import os
+import json
+import re
+from typing import Dict, List, Optional, Tuple, Any, Union
+from flask import Flask, render_template, request, jsonify, session
+from openai import OpenAI
+from dotenv import load_dotenv
+import openrouteservice
+import logging
+from datetime import datetime, timedelta
+from functools import lru_cache
+import hashlib
+import traceback # Добавен за по-добри трасировки
+
+# ============================================================================
+# КОНФИГУРАЦИЯ И ИНИЦИАЛИЗАЦИЯ
+# ============================================================================
+
+# Конфигурация на логирането
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Зареждане на променливите от .env файла за сигурност
+load_dotenv()
+
+# ИМПОРТ НА QUERY ФУНКЦИИТЕ
+# Уверете се, че всички необходими функции са импортирани правилно
+try:
+    from query import (
+        search_trails,
+        get_trail_by_id,
+        advanced_search,
+        list_all_trails,
+        build_context_from_trails,
+        parse_duration_range
+    )
+    logger.info("✅ Query модулът е зареден успешно")
+except ImportError as e:
+    logger.error(f"❌ Грешка при импорт на query модула: {e}")
+    # Ако импортът се провали, функциите ще останат недефинирани, което ще доведе до NameError
+    # За да предотвратим срив при стартиране, дефинираме заглушки
+    search_trails = lambda *args, **kwargs: []
+    get_trail_by_id = lambda *args, **kwargs: None
+    advanced_search = lambda *args, **kwargs: []
+    list_all_trails = lambda *args, **kwargs: []
+    build_context_from_trails = lambda *args, **kwargs: "Няма данни за маршрути."
+    parse_duration_range = lambda *args, **kwargs: (None, None)
+
+
+# Проверка за OpenAI API ключ и инициализация
+try:
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    if not OPENAI_API_KEY:
+        logger.error("❌ OPENAI_API_KEY не е зададен!")
+        # Не повдигайте ValueError директно, за да позволите на приложението да стартира
+        # с ограничена функционалност, ако други части не зависят от него
+        openai_client = None
+    else:
+        # Инициализация на OpenAI клиента
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Опционален тест на API ключа
+        try:
+            test_response = openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",  # По-евтин модел за тест
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=5,
+                timeout=5 # Добавен таймаут за теста
+            )
+            logger.info("✅ OpenAI API ключът работи правилно")
+        except Exception as e:
+            logger.error(f"❌ OpenAI API ключът не работи или има проблем с връзката: {e}")
+            openai_client = None # Деактивираме клиента, ако има проблем
+    
+except Exception as e:
+    logger.error(f"❌ Проблем с OpenAI API конфигурацията: {e}")
+    openai_client = None
+
+# Инициализация на OpenRouteService
+try:
+    ORS_API_KEY = os.getenv("OPENROUTESERVICE_API_KEY")
+    if ORS_API_KEY:
+        ors_client = openrouteservice.Client(key=ORS_API_KEY)
+        logger.info("✅ OpenRouteService клиентът е инициализиран")
+    else:
+        ors_client = None
+        logger.warning("⚠️ OpenRouteService API ключ не е зададен. Функционалността за маршрутизация ще е ограничена.")
+except Exception as e:
+    logger.error(f"❌ Грешка при инициализация на OpenRouteService: {e}")
+    ors_client = None
+
+# Създаване на Flask приложението
+app = Flask(__name__,
+    template_folder='templates',
+    static_folder='static',
+    static_url_path='/static')
+
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key-change-in-production")
+
+# Добавете route за manifest.json
+@app.route('/manifest.json')
+def manifest():
+    return app.send_static_file('manifest.json')
+
+# Добавете route за favicon
+@app.route('/favicon.ico')
+def favicon():
+    return app.send_static_file('images/favicon.ico')
+
+# Добавете тази функция в app.py за проверка (ако е необходима за дебъгване)
+@app.route('/debug/files')
+def debug_files():
+    static_path = os.path.join(app.root_path, 'static')
+    files = []
+    for root, dirs, filenames in os.walk(static_path):
+        for filename in filenames:
+            rel_path = os.path.relpath(os.path.join(root, filename), static_path)
+            files.append(rel_path)
+    return {'static_files': files}
+
+# ============================================================================
+# КОНСТАНТИ И КОНФИГУРАЦИЯ
+# ============================================================================
+
+# Максимален брой съобщения в историята на разговора
+MAX_CONVERSATION_HISTORY = 10
+
+# Максимална дължина на потребителско съобщение (за сигурност)
+MAX_MESSAGE_LENGTH = 500
+
+# Географски граници на България за валидация на координати
+BULGARIA_BOUNDS = {
+    'min_lat': 41.2,
+    'max_lat': 44.2,
+    'min_lng': 22.3,
+    'max_lng': 28.6
+}
+
+# Общи географски граници за координати
+COORDINATE_BOUNDS = {
+    'min_lat': -90.0,
+    'max_lat': 90.0,
+    'min_lng': -180.0,
+    'max_lng': 180.0
+}
+
+# Кеш конфигурация
+API_CACHE_TTL = timedelta(minutes=30)
+
+# ============================================================================
+# СИСТЕМНИ ПРОМПТОВЕ ЗА AI МОДЕЛА
+# ============================================================================
+
+SYSTEM_PROMPT = """
+Ти си експертен туристически асистент за екопътеки в България.
+ВИНАГИ отговаряй в ТОЧЕН JSON формат.
+
+ФОРМАТ НА ОТГОВОРА:
+{
+  "response": "текст на отговора",
+  "coords": [
+    {"Име на маршрут": {"lat": число, "lng": число}}
+  ]
+}
+
+НИКОГА не слагай JSON в кавички или в текст!
+ВИНАГИ започвай директно с { и завършвай с }
+Ако няма конкретни координати, 'coords' масивът трябва да е празен '[]'.
+
+При заявки за показване на карта:
+- Използвай координатите от предоставените маршрути или предишни препоръки.
+- Включи координатите в 'coords' масива.
+- Дай кратко описание в 'response'.
+
+ПРИМЕР ЗА КООРДИНАТИ НА ТРЯВНА: {"lat": 42.5694, "lng": 25.4952}
+ПРИМЕР ЗА КООРДИНАТИ НА ПЛОВДИВ: {"lat": 42.1466, "lng": 24.7497}
+"""
+
+# ============================================================================
+# КЕШИРАНЕ И ОПТИМИЗАЦИЯ (добавени @lru_cache)
+# ============================================================================
+
+# _get_gpt_response_internal се кешира директно
+# search_trails, get_trail_by_id, advanced_search, list_all_trails
+# вече имат @lru_cache в query.py, така че не ги кешираме отново тук.
+
+# ============================================================================
+# ПОМОЩНИ ФУНКЦИИ ЗА ВАЛИДАЦИЯ И ОБРАБОТКА
+# ============================================================================
+
+def validate_coordinates(latitude: float, longitude: float) -> Tuple[bool, str]:
+    """
+    Валидира географските координати за правилност и съответствие с България.
+    
+    Args:
+        latitude (float): Географска ширина в градуси
+        longitude (float): Географска дължина в градуси
+    
+    Returns:
+        Tuple[bool, str]: (валидни_ли_са, съобщение)
+    """
+    try:
+        lat = float(latitude)
+        lng = float(longitude)
+        
+        # Проверка на основните географски граници
+        if not (COORDINATE_BOUNDS['min_lat'] <= lat <= COORDINATE_BOUNDS['max_lat']):
+            return False, f"Невалидна географска ширина: {lat}°"
+        
+        if not (COORDINATE_BOUNDS['min_lng'] <= lng <= COORDINATE_BOUNDS['max_lng']):
+            return False, f"Невалидна географска дължина: {lng}°"
+        
+        # Проверка дали координатите попадат в границите на България
+        if not (BULGARIA_BOUNDS['min_lat'] <= lat <= BULGARIA_BOUNDS['max_lat'] and
+                BULGARIA_BOUNDS['min_lng'] <= lng <= BULGARIA_BOUNDS['max_lng']):
+            return False, f"Координатите ({lat}°, {lng}°) не попадат в границите на България"
+        
+        return True, f"Координатите ({lat}°, {lng}°) са валидни за България"
+        
+    except (ValueError, TypeError) as e:
+        return False, f"Грешка при обработка на координатите: {str(e)}"
+
+def sanitize_user_input(message: str) -> str:
+    """
+    Почиства и валидира потребителския вход за сигурност.
+    
+    Args:
+        message (str): Оригиналното съобщение от потребителя
+    
+    Returns:
+        str: Почистеното и валидирано съобщение
+    """
+    if not isinstance(message, str):
+        return ""
+    
+    # Премахване на излишни интервали
+    message = message.strip()
+    
+    # Ограничаване на дължината
+    if len(message) > MAX_MESSAGE_LENGTH:
+        message = message[:MAX_MESSAGE_LENGTH]
+    
+    # Премахване на HTML тагове
+    message = re.sub(r'<[^>]+>', '', message)
+    
+    # Премахване на множествени интервали
+    message = re.sub(r'\s+', ' ', message)
+    
+    return message
+
+def parse_ai_response(content: str) -> Dict[str, Any]:
+    """Парсва AI отговора с подобрено JSON извличане."""
+    try:
+        # Опит за директно парсване
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Първоначално парсване на JSON отговор неуспешно: {e}. Опитвам да извлека JSON.")
+        
+        # Опит за извличане на JSON от текста, дори ако има допълнителен текст
+        json_patterns = [
+            r'```json\s*(\{.*?\})\s*```', # Захваща JSON блок в markdown
+            r'(\{.*?\})',                  # Общ JSON обект
+        ]
+        
+        for pattern in json_patterns:
+            json_match = re.search(pattern, content, re.DOTALL)
+            if json_match:
+                try:
+                    parsed = json.loads(json_match.group(1))
+                    # Уверете се, че има 'response' и 'coords' или поне 'coords'
+                    if isinstance(parsed, dict) and ('response' in parsed or 'coords' in parsed):
+                        return parsed
+                except json.JSONDecodeError as e_inner:
+                    logger.debug(f"Неуспешен опит за парсване на JSON с шаблон '{pattern}': {e_inner}")
+                    continue
+        
+        # Fallback към текстов отговор, ако не може да се парсне JSON
+        logger.warning("Не може да се извлече валиден JSON от AI отговора. Връщам текстов отговор.")
+        return {
+            'response': content,
+            'coords': []
+        }
+    
+def _extract_keywords_from_message(message: str) -> Dict[str, str]:
+    """Извлича ключови думи от съобщението. (Опростена версия, може да се подобри с LLM)"""
+    keywords = {}
+    message_lower = message.lower()
+    
+    # Региони
+    regions = {
+        'витоша': ['витоша'], 'рила': ['рила', 'седемте рилски езера'],
+        'пирин': ['пирин', 'вихрен'], 'стара планина': ['стара планина', 'балкан', 'ботев'],
+        'родопи': ['родопи', 'смолян', 'пампорово', 'триград'],
+        'странджа': ['странджа'], 'пловдив': ['пловдив'], 'софия': ['софия'],
+        'варна': ['варна'], 'бургас': ['бургас'], 'търново': ['търново', 'велико търново'],
+        'етрополски балкан': ['етрополски балкан'], 'централен балкан': ['централен балкан'],
+        'чупренска планина': ['чупренска планина', 'миджур'], 'западни родопи': ['западни родопи']
+    }
+    for region, synonyms in regions.items():
+        if any(syn in message_lower for syn in synonyms):
+            keywords['region'] = region
+            break
+    
+    # Трудност
+    difficulties = {
+        'лесна': ['лесна', 'лесни', 'начинаещ', 'лек', 'лека', 'семеен', 'ниска'],
+        'средна': ['средна', 'средни', 'умерена', 'умерени', 'нормална'],
+        'трудна': ['трудна', 'трудни', 'тежка', 'предизвикателна', 'експертна', 'висока']
+    }
+    for difficulty, synonyms in difficulties.items():
+        if any(syn in message_lower for syn in synonyms):
+            keywords['difficulty'] = difficulty
+            break
+    
+    # Тип маршрут/атракция (разширено)
+    types = {
+        'връх': ['връх', 'върхове', 'връшка', 'пик'],
+        'водопад': ['водопад', 'водопади'],
+        'езеро': ['езеро', 'езера'],
+        'пещера': ['пещера', 'пещери'],
+        'манастир': ['манастир', 'манастири'],
+        'резерват': ['резерват', 'парк', 'защитена местност'],
+        'крепост': ['крепост', 'крепости', 'историческа забележителност'],
+        'музей': ['музей', 'музеи'],
+        'скали': ['скали', 'скален'],
+        'река': ['река', 'реки'],
+        'пролом': ['пролом', 'дефиле']
+    }
+    for type_name, synonyms in types.items():
+        if any(syn in message_lower for syn in synonyms):
+            keywords['type'] = type_name
+            break
+            
+    # Сезон
+    seasons = {
+        'пролет': ['пролет', 'пролетта', 'април', 'май'],
+        'лято': ['лято', 'лятото', 'юни', 'юли', 'август'],
+        'есен': ['есен', 'есента', 'септември', 'октомври', 'ноември'],
+        'зима': ['зима', 'зимата', 'декември', 'януари', 'февруари'],
+        'целогодишно': ['целогодишно', 'по всяко време']
+    }
+    for season, synonyms in seasons.items():
+        if any(syn in message_lower for syn in synonyms):
+            keywords['season'] = season
+            break
+            
+    return keywords
+
+def _validate_coordinates_in_response(coords: List[Dict]) -> List[Dict]:
+    """Валидира координатите в отговора."""
+    validated = []
+    
+    for coord_obj in coords:
+        if not isinstance(coord_obj, dict):
+            continue
+            
+        for name, coord in coord_obj.items():
+            if not isinstance(coord, dict):
+                continue
+                
+            # Променено от 'lat', 'lng' на 'latitude', 'longitude' за съвпадение с eco.json
+            if 'latitude' not in coord or 'longitude' not in coord:
+                continue
+                
+            try:
+                lat = float(coord['latitude'])
+                lng = float(coord['longitude'])
+                
+                # Основна валидация на координати
+                if not (COORDINATE_BOUNDS['min_lat'] <= lat <= COORDINATE_BOUNDS['max_lat']) or \
+                   not (COORDINATE_BOUNDS['min_lng'] <= lng <= COORDINATE_BOUNDS['max_lng']):
+                    logger.warning(f"Координатите за {name} са извън валидните граници: lat={lat}, lng={lng}")
+                    continue
+                
+                # Проверка дали са в България
+                if (BULGARIA_BOUNDS['min_lat'] <= lat <= BULGARIA_BOUNDS['max_lat'] and 
+                    BULGARIA_BOUNDS['min_lng'] <= lng <= BULGARIA_BOUNDS['max_lng']):
+                    # Важно: Връщаме ги като 'lat'/'lng' за Leaflet.js съвместимост във фронтенда
+                    validated.append({name: {"lat": lat, "lng": lng}})
+                    logger.info(f"Валидни координати за {name}: lat={lat}, lng={lng}")
+                else:
+                    logger.warning(f"Координатите за {name} са извън България: lat={lat}, lng={lng}")
+                    
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Невалидни координати за {name}: {e}")
+                continue
+    
+    return validated
+
+def analyze_query_intent(user_message: str) -> Dict[str, bool]:
+    """Анализира интента на потребителската заявка."""
+    message_lower = user_message.lower()
+    
+    return {
+        'is_route_query': any(word in message_lower for word in [
+            'маршрут', 'пътека', 'около', 'близо до', 'препоръчай', 'покажи',
+            'витоша', 'рила', 'пирин', 'родопи', 'стара планина', 'търся', 'искам'
+        ]),
+        'is_advice_query': any(word in message_lower for word in [
+            'какво да нося', 'екипировка', 'подготовка', 'съвети', 'безопасност'
+        ]),
+        'is_specific_location': any(word in message_lower for word in [
+            'софия', 'пловдив', 'варна', 'бургас', 'стара загора', 'трявна', 'белица'
+        ]),
+        'has_difficulty': any(word in message_lower for word in [
+            'лесна', 'лесни', 'средна', 'средни', 'трудна', 'трудни'
+        ]),
+        'is_map_request': any(word in message_lower for word in ['карта', 'картата', 'покажи на картата'])
+    }
+
+# ============================================================================
+# ГЛАВНА ФУНКЦИЯ ЗА GPT ОТГОВОРИ
+# ============================================================================
+
+@lru_cache(maxsize=100) # Кеширане на GPT отговори по хеш на съобщението и контекста
+def get_gpt_response_cached(user_message: str, context_hash: str) -> str:
+    """Кеширана версия на GPT заявката, която извиква _get_gpt_response_internal."""
+    # Тук не подаваме целия контекст, а само хеш, за да може lru_cache да работи.
+    # _get_gpt_response_internal ще трябва да пресъздаде контекста или да го получи от друг източник.
+    # В случая, контекстът се изгражда вътре в get_gpt_response.
+    return get_gpt_response(user_message, context_hash) # context_hash всъщност е пълният контекст тук
+
+def get_gpt_response(user_message: str, conversation_context_text: str, retry_count: int = 0) -> str:
+    """
+    Генерира отговор от OpenAI GPT модела с подобрено error handling и интелигентен анализ.
+    
+    Args:
+        user_message: Съобщението от потребителя
+        conversation_context_text: Контекст за разговора, който включва намерени маршрути
+        retry_count: Брой опити за retry
+    
+    Returns:
+        str: JSON форматиран отговор
+    """
+    max_retries = 2
+    
+    if not openai_client:
+        logger.error("OpenAI клиентът не е инициализиран. Не може да се генерира AI отговор.")
+        return json.dumps({
+            "response": "AI услугата временно не е достъпна. Моля, опитайте отново по-късно.",
+            "error": True
+        })
+
+    try:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": conversation_context_text} # Контекстът е вече изграден тук
+        ]
+
+        logger.info(f"Изпращане на заявка към OpenAI с модел: gpt-4") # или gpt-4o-mini
+        response = openai_client.chat.completions.create(
+            model="gpt-4", # Използвайте gpt-4o-mini, ако е по-икономично
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1000,
+            timeout=30
+        )
+        
+        if not response or not response.choices or not response.choices[0] or not response.choices[0].message:
+            logger.error("Празен или непълен отговор от OpenAI API.")
+            raise ValueError("Empty or incomplete response from OpenAI API.")
+        
+        ai_response_content = response.choices[0].message.content
+        
+        if not ai_response_content:
+            logger.error("AI отговорът е празен.")
+            raise ValueError("AI response content is empty.")
+
+        parsed_response = parse_ai_response(ai_response_content)
+        
+        # Ако AI не е дал координати, но има 'coords' в системния промпт или контекста,
+        # може да ги добавим тук като предпазна мярка.
+        # Всъщност, _validate_coordinates_in_response вече се грижи за валидацията.
+        # Тук просто трябва да осигурим, че 'coords' е списък.
+        if 'coords' not in parsed_response or not isinstance(parsed_response['coords'], list):
+            parsed_response['coords'] = []
+
+        # Валидация на координатите във финалния отговор
+        validated_coords = _validate_coordinates_in_response(parsed_response['coords'])
+        parsed_response['coords'] = validated_coords
+        logger.info(f"Финално валидирани {len(validated_coords)} координати в отговора.")
+
+        return json.dumps(parsed_response)
+            
+    except Exception as e:
+        logger.error(f"❌ Грешка при OpenAI заявка (опит {retry_count + 1}): {e}")
+        
+        if retry_count < max_retries and should_retry(e):
+            logger.info(f"🔄 Повторен опит {retry_count + 1}/{max_retries}")
+            import time
+            time.sleep(1 * (retry_count + 1))
+            return get_gpt_response(user_message, conversation_context_text, retry_count + 1)
+        
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        
+        return json.dumps({
+            "response": "Възникна техническа грешка при обработката на заявката. Моля, опитайте отново.",
+            "error": True
+        })
+
+def should_retry(error):
+    """Определя дали грешката заслужава retry."""
+    error_str = str(error).lower()
+    return any(keyword in error_str for keyword in [
+        'timeout', 'connection', 'network', 'rate limit'
+    ])
+
+# В app.py добавете глобална променлива за проследяване на разговора
+conversation_state = {}
+
+def get_conversation_context(user_id="default"):
+    """Получава контекста на разговора за конкретен потребител."""
+    if user_id not in conversation_state:
+        conversation_state[user_id] = {
+            "stage": "initial",  # initial, filtering, finalizing
+            "preferences": {},
+            "last_results": [],
+            "question_count": 0,
+            "last_recommendations": [] # Добавено за съхранение на координати
+        }
+    return conversation_state[user_id]
+
+def update_conversation_state(user_id="default", **kwargs):
+    """Актуализира състоянието на разговора."""
+    state = get_conversation_context(user_id)
+    state.update(kwargs)
+    return state
+
+# ============================================================================
+# ОСНОВНИ МАРШРУТИ НА ПРИЛОЖЕНИЕТО
+# ============================================================================
+
+@app.route('/')
+def home():
+    """Зарежда началната страница на приложението."""
+    return render_template('index.html')
+
+@app.route('/querydata', methods=['POST'])
+def handle_querydata():
+    try:
+        data = request.get_json()
+        user_message = data.get('message', '').strip()
+        user_id = data.get('user_id', 'default')
+        
+        logger.info(f"📨 Получена заявка: '{user_message}' (Потребител: {user_id})")
+
+        # Санитизация на входа
+        sanitized_message = sanitize_user_input(user_message)
+        if not sanitized_message:
+            return jsonify({
+                'response': 'Моля, въведете смислено съобщение.',
+                'error': True
+            }), 400
+
+        conv_state = get_conversation_context(user_id)
+        
+        # Обработка на общи заявки (поздрави, помощ и т.н.)
+        general_response = handle_general_queries(sanitized_message)
+        if general_response:
+            return jsonify(general_response)
+
+        # Анализ на интента и извличане на ключови думи от съобщението
+        query_intent = analyze_query_intent(sanitized_message)
+        extracted_keywords = _extract_keywords_from_message(sanitized_message)
+        
+        logger.info(f"Анализ на интента: {query_intent}")
+        logger.info(f"Извлечени ключови думи: {extracted_keywords}")
+
+        # Първо, опитайте търсене с advanced_search, ако има достатъчно филтри
+        search_params = {
+            'region': extracted_keywords.get('region'),
+            'difficulty': extracted_keywords.get('difficulty'),
+            'best_season': [extracted_keywords['season']] if 'season' in extracted_keywords else None,
+            'attraction_keywords': [extracted_keywords['type']] if 'type' in extracted_keywords else None,
+            # Можете да добавите и други параметри тук, ако ги извличате
+        }
+        
+        # Премахване на None стойности от search_params
+        search_params = {k: v for k, v in search_params.items() if v is not None}
+
+        # Извикваме advanced_search само ако имаме поне един филтър
+        if search_params:
+            matching_trails = advanced_search(**search_params)
+            logger.info(f"🔍 Намерени {len(matching_trails)} маршрута чрез advanced_search.")
+        else:
+            # Ако няма специфични филтри, използваме search_trails с общото съобщение
+            # или list_all_trails ако е обща заявка за "всички маршрути"
+            if any(word in sanitized_message for word in ['всички', 'всичко', 'цялата информация']):
+                matching_trails = list_all_trails()
+                logger.info(f"🔍 Намерени {len(matching_trails)} маршрута чрез list_all_trails.")
+            else:
+                # Извикваме search_trails с цялото съобщение за общо търсене
+                matching_trails = search_trails(sanitized_message)
+                logger.info(f"🔍 Намерени {len(matching_trails)} маршрута чрез search_trails.")
+
+        # Актуализиране на състоянието на разговора с намерените резултати
+        update_conversation_state(user_id, last_results=matching_trails, question_count=conv_state['question_count'] + 1)
+
+        # Изграждане на контекст за AI модела
+        context = build_context_from_trails(matching_trails) # Използваме тази от query.py
+
+        # Генериране на AI отговор
+        ai_response_text = get_gpt_response(sanitized_message, context)
+        parsed_response = json.loads(ai_response_text)
+
+        # НОВА ЛОГИКА: Запазване на препоръки с координати
+        if parsed_response.get('coords'):
+            update_conversation_state(user_id, last_recommendations=[
+                {'name': name, 'coordinates': {'lat': coord['lat'], 'lng': coord['lng']}}
+                for coord_obj in parsed_response['coords'] for name, coord in coord_obj.items()
+            ])
+        elif query_intent.get('is_map_request') and conv_state.get('last_recommendations'):
+            # Ако е заявка за карта, но AI не е върнал координати, използваме последните запомнени
+            parsed_response['coords'] = [
+                {rec['name']: {'lat': rec['coordinates']['lat'], 'lng': rec['coordinates']['lng']}}
+                for rec in conv_state['last_recommendations']
+            ]
+            logger.info(f"Добавени {len(parsed_response['coords'])} предишни координати за карта.")
+
+        # Добавяне на метаданни
+        parsed_response['source'] = 'EcoTrails AI Assistant'
+        parsed_response['trails_found'] = len(matching_trails)
+        parsed_response['conversation_stage'] = conv_state['stage'] # Може да актуализирате stage по-горе
+        parsed_response['extracted_keywords'] = extracted_keywords
+        parsed_response['query_intent'] = query_intent
+        
+        return jsonify(parsed_response)
+
+    except Exception as e:
+        logger.error(f"❌ Критична грешка в handle_querydata: {e}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        
+        return jsonify({
+            'response': 'Възникна техническа грешка при обработката на заявката. Моля, опитайте отново.',
+            'error': True
+        }), 500
+
+def handle_general_queries(message: str) -> Optional[Dict]:
+    """
+    Обработва общи заявки и поздрави.
+    """
+    message_lower = message.lower().strip()
+    
+    greetings = ['здравей', 'здрасти', 'привет', 'hello', 'hi', 'добър ден']
+    if any(greeting in message_lower for greeting in greetings):
+        return {
+            'response': 'Здравейте! 👋 Аз съм вашият интелигентен туристически асистент за екопътеки в България. Как мога да ви помогна днес?',
+            'source': 'system'
+        }
+    
+    help_keywords = ['помощ', 'help', 'как работи', 'какво можеш']
+    if any(keyword in message_lower for keyword in help_keywords):
+        return {
+            'response': '''Мога да ви помогна с:
+
+🗺️ Намиране на подходящи маршрути по име или регион
+📍 Информация за местоположения и координати  
+🥾 Съвети за подготовка и екипировка
+🌟 Препоръки според вашите предпочитания
+⛰️ Детайли за трудност и продължителност
+
+Примери за въпроси:
+- "Покажи маршрути в Рила"
+- "Лесни маршрути за начинаещи"
+- "Къде да отида през есента?"''',
+            'source': 'system'
+        }
+    
+    thanks = ['благодаря', 'мерси', 'thanks', 'спасибо']
+    if any(thank in message_lower for thank in thanks):
+        return {
+            'response': 'Моля! Приятно пътуване и безопасни преходи! 🏞️✨',
+            'source': 'system'
+        }
+    
+    return None
+
+@app.route('/trails/all', methods=['GET'])
+def get_all_trails_endpoint(): # Променено име, за да не се бърка с импортираната функция
+    """
+    Връща всички налични маршрути.
+    """
+    try:
+        trails = list_all_trails() # Използваме импортираната функция
+        
+        formatted_trails = []
+        for trail in trails:
+            location_data = trail.get('location', {})
+            coordinates_data = location_data.get('coordinates', {})
+            
+            trail_summary = {
+                'id': trail.get('id', ''),
+                'name': trail.get('name', 'Неименован маршрут'),
+                'region': location_data.get('region', 'Неизвестен регион'),
+                'difficulty': trail.get('trail_details', {}).get('difficulty', 'Неопределена'),
+                # Важно: Leaflet очаква 'lat' и 'lng', докато eco.json има 'latitude' и 'longitude'
+                'coordinates': {
+                    'lat': float(coordinates_data.get('latitude', 0.0)) if coordinates_data.get('latitude') else 0.0,
+                    'lng': float(coordinates_data.get('longitude', 0.0)) if coordinates_data.get('longitude') else 0.0
+                }
+            }
+            formatted_trails.append(trail_summary)
+        
+        return jsonify({
+            'trails': formatted_trails,
+            'total_count': len(formatted_trails)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Грешка при извличане на всички маршрути: {e}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({'error': 'Грешка при зареждане на маршрутите'}), 500
+
+@app.route('/trails/by_id/<trail_id>', methods=['GET'])
+def get_trail_details_endpoint(trail_id: str):
+    """
+    Връща детайли за конкретен маршрут.
+    """
+    try:
+        if not trail_id or not isinstance(trail_id, str):
+            return jsonify({
+                'error': 'Невалиден идентификатор на маршрут',
+                'code': 'INVALID_TRAIL_ID'
+            }), 400
+        
+        # get_trail_by_id очаква int или str, но в eco.json ID-тата са int.
+        # Уверете се, че го подавате като int.
+        try:
+            numeric_trail_id = int(trail_id)
+        except ValueError:
+            return jsonify({
+                'error': f'Невалиден формат на ID: "{trail_id}". Очаква се число.',
+                'code': 'INVALID_ID_FORMAT'
+            }), 400
+
+        trail = get_trail_by_id(numeric_trail_id) # Използваме импортираната функция
+        if trail:
+            return jsonify(trail)
+        else:
+            return jsonify({
+                'error': f'Маршрут с идентификатор "{trail_id}" не съществува',
+                'code': 'TRAIL_NOT_FOUND'
+            }), 404
+            
+    except Exception as e:
+        logger.error(f"❌ Грешка при извличане на маршрут {trail_id}: {e}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({
+            'error': 'Възникна грешка при извличането на маршрута',
+            'code': 'DATABASE_ERROR'
+        }), 500
+
+@app.route('/trails/advanced_search', methods=['POST'])
+def advanced_search_endpoint():
+    """
+    Разширено търсене на маршрути.
+    """
+    try:
+        search_params = request.json or {}
+        
+        # Санитизация на всички стрингови параметри
+        sanitized_params = {}
+        for key, value in search_params.items():
+            if isinstance(value, str):
+                sanitized_params[key] = sanitize_user_input(value)
+            elif isinstance(value, list) and all(isinstance(i, str) for i in value):
+                sanitized_params[key] = [sanitize_user_input(s) for s in value]
+            else:
+                sanitized_params[key] = value
+
+        logger.info(f"🔍 Разширено търсене с параметри: {sanitized_params}")
+        
+        search_results = advanced_search(**sanitized_params) # Използваме импортираната функция
+        
+        return jsonify({
+            'results': search_results,
+            'count': len(search_results),
+            'search_criteria': sanitized_params
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Грешка при разширено търсене: {e}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({
+            'error': 'Възникна грешка при разширеното търсене',
+            'code': 'SEARCH_ERROR'
+        }), 500
+
+@app.route('/route/calculate', methods=['POST'])
+def calculate_hiking_route():
+    """
+    Изчислява оптимален пешеходен маршрут между две точки.
+    """
+    if not ors_client:
+        return jsonify({
+            'error': 'Услугата за маршрутизация не е достъпна (липсва API ключ)',
+            'code': 'SERVICE_UNAVAILABLE'
+        }), 503
+    
+    try:
+        request_data = request.json
+        if not request_data:
+            return jsonify({
+                'error': 'Няма предоставени данни за маршрута',
+                'code': 'NO_DATA'
+            }), 400
+        
+        start_point = request_data.get('start')
+        end_point = request_data.get('end')
+        
+        if not start_point or not end_point:
+            return jsonify({
+                'error': 'Моля, предоставете начална и крайна точка',
+                'code': 'MISSING_COORDINATES'
+            }), 400
+        
+        # Openrouteservice очаква [longitude, latitude]
+        # Validating coordinates before passing to ORS
+        if not (isinstance(start_point, list) and len(start_point) == 2 and
+                isinstance(end_point, list) and len(end_point) == 2):
+            return jsonify({
+                'error': 'Невалиден формат на координатите. Очакват се [longitude, latitude].',
+                'code': 'INVALID_COORDINATE_FORMAT'
+            }), 400
+        
+        # Валидация на стойностите на координатите
+        # validate_coordinates приема (latitude, longitude), а ors очаква (longitude, latitude)
+        start_valid, start_error = validate_coordinates(start_point[1], start_point[0])
+        if not start_valid:
+            return jsonify({
+                'error': f'Начална точка: {start_error}',
+                'code': 'INVALID_START_COORDINATES'
+            }), 400
+        
+        end_valid, end_error = validate_coordinates(end_point[1], end_point[0])
+        if not end_valid:
+            return jsonify({
+                'error': f'Крайна точка: {end_error}',
+                'code': 'INVALID_END_COORDINATES'
+            }), 400
+        
+        logger.info(f"🗺️ Изчисляване на маршрут от {start_point} до {end_point}")
+        
+        route_data = ors_client.directions(
+            coordinates=[start_point, end_point],
+            profile='foot-hiking',
+            format='geojson',
+            options={
+                'avoid_features': ['highways'],
+                'preference': 'recommended'
+            }
+        )
+        
+        logger.info("✅ Маршрутът е изчислен успешно")
+        return jsonify(route_data)
+        
+    except Exception as e:
+        logger.error(f"❌ Грешка при изчисляване на маршрута: {e}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({
+            'error': 'Възникна грешка при изчисляването на маршрута',
+            'code': 'ROUTING_ERROR'
+        }), 500
+
+# ============================================================================
+# ОБРАБОТЧИЦИ НА ГРЕШКИ
+# ============================================================================
+
+@app.errorhandler(404)
+def handle_not_found(error):
+    """Обработва 404 грешки."""
+    return jsonify({
+        'error': 'Заявеният ресурс не е намерен',
+        'code': 'NOT_FOUND',
+        'status': 404
+    }), 404
+
+@app.errorhandler(500)
+def handle_internal_error(error):
+    """Обработва 500 грешки."""
+    logger.error(f"Вътрешна грешка на сървъра: {error}")
+    logger.error(f"Stack trace: {traceback.format_exc()}")
+    return jsonify({
+        'error': 'Възникна вътрешна грешка на сървъра',
+        'code': 'INTERNAL_SERVER_ERROR',
+        'status': 500
+    }), 500
+
+@app.errorhandler(400)
+def handle_bad_request(error):
+    """Обработва 400 грешки."""
+    logger.error(f"Невалидна заявка: {error}")
+    logger.error(f"Stack trace: {traceback.format_exc()}")
+    return jsonify({
+        'error': 'Невалидна заявка',
+        'code': 'BAD_REQUEST',
+        'status': 400
+    }), 400
+
+# ============================================================================
+# СТАРТИРАНЕ НА ПРИЛОЖЕНИЕТО
+# ============================================================================
+
+if __name__ == '__main__':
+    """
+    Главна функция за стартиране на Flask приложението.
+    """
+    logger.info("🌿 Стартиране на туристическия чатбот за екопътеки...")
+    logger.info("📍 Приложението ще бъде достъпно на: http://localhost:5000")
+    logger.info("🔧 Режим на разработка: Активиран")
+    
+    app.run(
+        debug=True,
+        host='0.0.0.0',
+        port=5000,
+        threaded=True
+    )

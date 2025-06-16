@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Интелигентен туристически асистент за откриване и изследване на българските екопътеки. Намерете перфектния маршрут за вашето следващо приключение в природата.">
+    <meta name="keywords" content="екопътеки, България, туризъм, планински маршрути, природа, AI асистент">
+    <meta name="author" content="EcoTrails Team">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph мета тагове за социални мрежи -->
+    <meta property="og:title" content="EcoTrails Bulgaria - Интелигентен туристически асистент">
+    <meta property="og:description" content="Открийте най-красивите екопътеки в България с помощта на нашия AI асистент">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ecotrails.bg">
+    <meta property="og:image" content="/static/images/og-image.jpg">
+    
+    <!-- Twitter Card мета тагове -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="EcoTrails Bulgaria">
+    <meta name="twitter:description" content="Интелигентен туристически асистент за екопътеки">
+    
+    <title>EcoTrails Bulgaria - Интелигентен туристически асистент за екопътеки</title>
+    
+    <!-- Preload критични ресурси -->
+    <link rel="preload" href="/static/css/main.css" as="style">
+    <link rel="preload" href="/static/js/app.js" as="script" crossorigin="anonymous">
+    
+    <!-- Favicon и икони -->
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/images/apple-touch-icon.png">
+    <link rel="manifest" href="/static/manifest.json">
+    
+    <!-- Стилове -->
+    <link rel="stylesheet" href="/static/css/main.css">
+    
+    <!-- Leaflet CSS за картите -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="anonymous">
+
+ </head>
+
+<body>
+    <!-- Skip to content link за достъпност -->
+    <a href="#main-content" class="sr-only">Прескочи към основното съдържание</a>
+    
+    <!-- Основен контейнер на приложението -->
+    <div class="app-container" role="main" id="main-content">
+        <!-- Навигационен панел -->
+        <nav class="circuit-navigation" role="navigation" aria-label="Основна навигация">
+            <div class="nav-button-group">
+                <!-- Sliding background елемент -->
+                <div class="nav-slide-bg" aria-hidden="true"></div>
+                
+                <!-- Навигационни бутони -->
+                <button class="nav-btn active" 
+                        data-slide="home" 
+                        type="button"
+                        aria-pressed="true"
+                        aria-label="Начална страница"
+                        title="Начална страница">
+                    <span class="nav-icon" aria-hidden="true">🏠</span>
+                </button>
+                
+                <button class="nav-btn" 
+                        data-slide="about" 
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="За нас"
+                        title="Информация за проекта">
+                    <span class="nav-icon" aria-hidden="true">ℹ️</span>
+                </button>
+                
+                <button class="nav-btn" 
+                        data-slide="instructions" 
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="Инструкции"
+                        title="Как да използвате приложението">
+                    <span class="nav-icon" aria-hidden="true">📋</span>
+                </button>
+                
+                <button class="nav-btn" 
+                        data-slide="chat" 
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="AI Чатбот"
+                        title="Разговор с AI асистента">
+                    <span class="nav-icon" aria-hidden="true">💬</span>
+                </button>
+                
+                <button class="nav-btn" 
+                        data-slide="map" 
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="Интерактивна карта"
+                        title="Карта с маршрути">
+                    <span class="nav-icon" aria-hidden="true">🗺️</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Контейнер за слайдовете -->
+        <div class="slider-container">
+            <!-- НАЧАЛЕН СЛАЙД -->
+            <section id="home-slide" class="slide active" aria-hidden="false">
+                <div class="slide-background" aria-hidden="true"></div>
+                <div class="content-overlay">
+                    <header>
+                        <h1 class="main-title">EcoTrails Bulgaria</h1>
+                        <p class="subtitle">Интелигентен туристически асистент за екопътеки</p>
+                    </header>
+                    
+                    <main>
+                        <p class="section-description">
+                            Създаваме мост между технологиите и природата, като предоставяме 
+                            интелигентни решения за откриване и изследване на българските екопътеки. 
+                            Нашата цел е да насърчим отговорния туризъм и да опазим природното 
+                            наследство за бъдещите поколения.
+                        </p>
+                        
+                        <!-- Статистики -->
+                        <div class="statistics-grid" role="region" aria-label="Статистики за платформата">
+                            <div class="stat-item">
+                                <div class="stat-icon" aria-hidden="true">🥾</div>
+                                <div class="stat-content">
+                                    <div class="stat-number" aria-label="150 маршрута">150+</div>
+                                    <div class="stat-label">Маршрута</div>
+                                </div>
+                            </div>
+                            
+                            <div class="stat-item">
+                                <div class="stat-icon" aria-hidden="true">🏔️</div>
+                                <div class="stat-content">
+                                    <div class="stat-number" aria-label="25 региона">25+</div>
+                                    <div class="stat-label">Региона</div>
+                                </div>
+                            </div>
+                            
+                            <div class="stat-item">
+                                <div class="stat-icon" aria-hidden="true">🤖</div>
+                                <div class="stat-content">
+                                    <div class="stat-number" aria-label="AI асистент">AI</div>
+                                    <div class="stat-label">Асистент</div>
+                                </div>
+                            </div>
+                            
+                            <div class="stat-item">
+                                <div class="stat-icon" aria-hidden="true">📱</div>
+                                <div class="stat-content">
+                                    <div class="stat-number" aria-label="24/7 достъпност">24/7</div>
+                                    <div class="stat-label">Достъпност</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Природни емотикони -->
+                        <div class="nature-emoji-grid" role="img" aria-label="Природни елементи">
+                            <span aria-label="Дърво">🌲</span>
+                            <span aria-label="Планина">⛰️</span>
+                            <span aria-label="Река">🏞️</span>
+                            <span aria-label="Цвете">🌸</span>
+                            <span aria-label="Слънце">☀️</span>
+                            <span aria-label="Облак">☁️</span>
+                        </div>
+                    </main>
+                </div>
+            </section>
+
+            <!-- ЗА НАС СЛАЙД -->
+            <section id="about-slide" class="slide" aria-hidden="true">
+                <div class="slide-background" aria-hidden="true"></div>
+                <div class="content-overlay">
+                    <header>
+                        <h2 class="section-title">За нас</h2>
+                        <p class="section-description">
+                            Нашата мисия е да направим българската природа по-достъпна и опазена
+                        </p>
+                    </header>
+                    
+                    <main>
+                        <div class="text-content">
+                            <h3 class="subsection-title">Нашата визия</h3>
+                            <p>
+                                Вярваме, че технологиите могат да бъдат мощен инструмент за опазване на природата. 
+                                Чрез интелигентни решения помагаме на туристите да откриват красивите места в България, 
+                                като същевременно ги образоваваме за важността на устойчивия туризъм.
+                            </p>
+                        </div>
+                        
+                        <div class="text-content">
+                            <h3 class="subsection-title">Какво предлагаме</h3>
+                            <ul class="feature-list" role="list">
+                                <li>Интелигентен AI асистент за персонализирани препоръки</li>
+                                <li>Подробна информация за над 150 екопътеки</li>
+                                <li>Интерактивни карти с GPS навигация</li>
+                                <li>Съвети за безопасност и екипировка</li>
+                                <li>Информация за най-подходящите сезони</li>
+                                <li>Образователно съдържание за природата</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="text-content">
+                            <h3 class="subsection-title">Нашият подход</h3>
+                            <p>
+                                Комбинираме най-новите технологии с дълбоко познание за българската природа. 
+                                Всеки маршрут е внимателно проучен и описан от експерти, а нашият AI асистент 
+                                използва тази информация, за да предостави най-подходящите препоръки за всеки потребител.
+                            </p>
+                        </div>
+                    </main>
+                </div>
+            </section>
+
+            <!-- ИНСТРУКЦИИ СЛАЙД -->
+            <section id="instructions-slide" class="slide" aria-hidden="true">
+                <div class="slide-background" aria-hidden="true"></div>
+                <div class="content-overlay">
+                    <header>
+                        <h2 class="section-title">Как да използвате приложението</h2>
+                        <p class="section-description">
+                            Следвайте тези прости стъпки за да намерите перфектната екопътека
+                        </p>
+                    </header>
+                    
+                    <main>
+                        <div class="instruction-steps">
+                            <!-- Стъпка 1 -->
+                            <article class="step-card">
+                                <div class="step-number" aria-label="Стъпка 1">1</div>
+                                <img src="/static/images/step1-choose.jpg" 
+                                     alt="Избор на категория маршрути" 
+                                     class="step-image"
+                                     loading="lazy">
+                                <h3 class="step-title">Изберете категория</h3>
+                                <p class="step-description">
+                                    Изберете желана категория от нашите маршрути според 
+                                    вашите предпочитания и физическа подготовка.
+                                </p>
+                            </article>
+                            
+                            <!-- Стъпка 2 -->
+                            <article class="step-card">
+                                <div class="step-number" aria-label="Стъпка 2">2</div>
+                                <img src="/static/images/step2-explore.jpg" 
+                                     alt="Преглед на маршрути" 
+                                     class="step-image"
+                                     loading="lazy">
+                                <h3 class="step-title">Прегледайте маршрутите</h3>
+                                <p class="step-description">
+                                    Прегледайте предложените маршрути с подробна информация 
+                                    за трудност, продължителност и забележителности.
+                                </p>
+                            </article>
+                            
+                            <!-- Стъпка 3 -->
+                            <article class="step-card">
+                                <div class="step-number" aria-label="Стъпка 3">3</div>
+                                <img src="/static/images/step3-chat.jpg" 
+                                     alt="Разговор с AI асистент" 
+                                     class="step-image"
+                                     loading="lazy">
+                                <h3 class="step-title">Попитайте AI асистента</h3>
+                                <p class="step-description">
+                                    Задавайте въпроси на нашия AI асистент за персонализирани 
+                                    препоръки и детайлна информация.
+                                </p>
+                            </article>
+                        </div>
+                        
+                        <!-- Допълнителни съвети -->
+                        <div class="text-content">
+                            <h3 class="subsection-title">Полезни съвети</h3>
+                            <ul class="feature-list" role="list">
+                                <li>Винаги проверявайте времето преди тръгване</li>
+                                <li>Носете достатъчно вода и храна</li>
+                                <li>Информирайте близки за вашия маршрут</li>
+                                <li>Спазвайте правилата за опазване на природата</li>
+                                <li>Използвайте GPS за навигация</li>
+                            </ul>
+                        </div>
+                    </main>
+                </div>
+            </section>
+
+            <!-- ЧАТ СЛАЙД -->
+            <section id="chat-slide" class="slide" aria-hidden="true">
+                <div class="slide-background" aria-hidden="true"></div>
+                <div class="content-overlay">
+                    <div class="chat-container">
+                        <!-- Заглавие на чата -->
+                        <header class="chat-header">
+                            <h2 class="chat-title">AI Туристически асистент</h2>
+                            <p class="chat-subtitle">Задайте въпрос за екопътеки в България</p>
+                        </header>
+                        
+                        <!-- Област за съобщения -->
+                        <div id="chat-messages" 
+                             class="chat-messages" 
+                             role="log" 
+                             aria-live="polite" 
+                             aria-label="Съобщения от чата">
+                            <!-- Съобщенията се добавят динамично от JavaScript -->
+                        </div>
+                        
+                        <!-- Loading индикатор -->
+                        <div id="loading-indicator" class="loading-indicator" style="display: none;" aria-hidden="true">
+                            <span>AI асистентът пише</span>
+                            <div class="loading-dots">
+                                <span class="dot"></span>
+                                <span class="dot"></span>
+                                <span class="dot"></span>
+                            </div>
+                        </div>
+                        
+                        <!-- Форма за въвеждане -->
+                        <form id="chat-form" class="chat-input-form" role="form">
+                            <div class="input-container">
+                                <label for="user-input" class="sr-only">Въведете вашето съобщение</label>
+                                    <textarea id="user-input" 
+                                        class="chat-textarea"
+                                        placeholder="Напишете вашия въпрос тук..."
+                                        rows="3"
+                                        maxlength="500"
+                                        required
+                                        aria-describedby="char-counter"></textarea>
+                                <div id="char-counter" class="char-counter" aria-live="polite">0/500</div>
+                            </div>
+                            
+                            <div class="input-actions">
+                                <button id="send-btn" type="submit" class="send-btn">
+                                    <span class="btn-text">Изпрати</span>
+                                    <span aria-hidden="true">📤</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <section id="map-slide" class="slide" aria-hidden="true">
+                <div class="slide-background" aria-hidden="true"></div>
+                <div class="content-overlay">
+                    <header>
+                        <h2 class="section-title">Интерактивна карта</h2>
+                        <p class="section-description">
+                            Изследвайте екопътеките на интерактивната карта
+                        </p>
+                    </header>
+                    
+                    <main>
+                        <!-- Контейнер за картата -->
+                        <div id="map-container" class="map-container" role="application" aria-label="Интерактивна карта с екопътеки">
+                            <!-- Картата се инициализира от JavaScript -->
+                        </div>
+                        
+                        <!-- Контроли за картата -->
+                        <div class="map-controls" role="toolbar" aria-label="Контроли за картата">
+                            <div class="control-group">
+                                <!-- ✅ ДОБАВЕТЕ ТОЗИ БУТОН -->
+                                <button id="show-chat-locations" 
+                                        class="control-btn" 
+                                        type="button"
+                                        style="display: none;"
+                                        aria-label="Покажи местоположения от чата">
+                                    <span class="control-icon" aria-hidden="true">💬</span>
+                                    <span class="control-text">Покажи от чата</span>
+                                </button>
+                                
+                                <button id="show-all-trails" 
+                                        class="control-btn" 
+                                        type="button"
+                                        aria-label="Покажи всички маршрути">
+                                    <span class="control-icon" aria-hidden="true">🗺️</span>
+                                    <span class="control-text">Всички маршрути</span>
+                                </button>
+                                
+                                <button id="locate-user" 
+                                        class="control-btn" 
+                                        type="button"
+                                        aria-label="Намери моето местоположение">
+                                    <span class="control-icon" aria-hidden="true">📍</span>
+                                    <span class="control-text">Моето местоположение</span>
+                                </button>
+                            </div>
+                            
+                            <!-- Филтри -->
+                            <div class="map-filters">
+                                <label for="difficulty-filter" class="sr-only">Филтър по трудност</label>
+                                <select id="difficulty-filter" class="filter-select" aria-label="Филтър по трудност">
+                                    <option value="">Всички трудности</option>
+                                    <option value="лесна">Лесна</option>
+                                    <option value="средна">Средна</option>
+                                    <option value="трудна">Трудна</option>
+                                </select>
+                                
+                                <label for="region-filter" class="sr-only">Филтър по регион</label>
+                                <select id="region-filter" class="filter-select" aria-label="Филтър по регион">
+                                    <option value="">Всички региони</option>
+                                    <option value="рила">Рила</option>
+                                    <option value="пирин">Пирин</option>
+                                    <option value="стара планина">Стара планина</option>
+                                    <option value="родопи">Родопи</option>
+                                    <option value="витоша">Витоша</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Информационен панел за маршрути -->
+                        <div id="map-info-panel" class="map-info-panel" style="display: none;" role="dialog" aria-labelledby="info-title">
+                            <header class="info-header">
+                                <h3 id="info-title" class="info-title">Информация за маршрут</h3>
+                                <button id="close-info-panel" 
+                                        class="close-btn" 
+                                        type="button"
+                                        aria-label="Затвори информационния панел">
+                                    <span aria-hidden="true">✕</span>
+                                </button>
+                            </header>
+                            
+                            <div class="info-content">
+                                <p id="trail-description" class="trail-description"></p>
+                                
+                                <div class="trail-details">
+                                    <div class="detail-item">
+                                        <strong>Трудност:</strong> 
+                                        <span id="trail-difficulty"></span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Продължителност:</strong> 
+                                        <span id="trail-duration"></span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Регион:</strong> 
+                                        <span id="trail-region"></span>
+                                    </div>
+                                </div>
+                                
+                                <div class="info-actions">
+                                    <button id="get-directions" 
+                                            class="action-btn primary" 
+                                            type="button">
+                                        Навигация
+                                    </button>
+                                    <button id="save-trail" 
+                                            class="action-btn secondary" 
+                                            type="button">
+                                        Запази
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- JavaScript библиотеки -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin="anonymous" defer></script>
+    
+    <!-- Основен JavaScript файл -->
+    <script type="module" src="/static/js/app.js" crossorigin="anonymous"></script>
+    
+    <!-- Service Worker за PWA функционалност
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/static/sw.js')
+                    .then(function(registration) {
+                        console.log('ServiceWorker регистриран успешно:', registration.scope);
+                    })
+                    .catch(function(error) {
+                        console.log('ServiceWorker регистрацията неуспешна:', error);
+                    });
+            });
+        }
+    </script>
+     -->
+    <!-- Google Analytics (опционално) -->
+    <!-- <script async src="https://www.googletagmanager.com/gtag/js?id=GA_MEASUREMENT_ID"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'GA_MEASUREMENT_ID');
+    </script> -->
+</body>
+</html>

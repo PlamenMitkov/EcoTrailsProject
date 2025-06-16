@@ -1,0 +1,16 @@
+{
+    "name": "EcoTrails Bulgaria",
+    "short_name": "EcoTrails",
+    "description": "Интелигентен туристически асистент за екопътеки в България",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#2563eb",
+    "theme_color": "#2563eb",
+    "icons": [
+        {
+            "src": "/static/images/favicon.ico",
+            "sizes": "32x32",
+            "type": "image/x-icon"
+        }
+    ]
+}

@@ -9,6 +9,8 @@ class ChatComponent extends BaseComponent {
         this.loadingIndicator = null;
         this.charCounter = null;
         this.form = null;
+        this.lastSendTime = 0;
+        this.cooldownDuration = 3000; 
     }
 
     async sendMessage(message, context = {}) {
@@ -396,10 +398,14 @@ class ChatComponent extends BaseComponent {
     }
 
     handleKeyDown(event) {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-            event.preventDefault();
-            this.handleSendMessage();
-        }
+        if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        this.handleSendMessage();
+    }
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        this.handleSendMessage();
+    }
     }
 
     toggleTypingIndicator(isTyping) {
@@ -519,23 +525,23 @@ class ChatComponent extends BaseComponent {
             messageDiv.appendChild(metaDiv);
         }
 
-        if (message.coordinates && message.coordinates.length > 0) {
-            const mapButtonContainer = this.createElement('div', {
-                className: 'map-visualization-container'
-            });
+        // if (message.coordinates && message.coordinates.length > 0) {
+        //     const mapButtonContainer = this.createElement('div', {
+        //         className: 'map-visualization-container'
+        //     });
 
-            const mapButton = this.createElement('button', {
-                className: 'map-visualization-button',
-                innerHTML: `📍 Покажи ${message.coordinates.length} местоположения на картата`
-            });
+        //     const mapButton = this.createElement('button', {
+        //         className: 'map-visualization-button',
+        //         innerHTML: `📍 Покажи ${message.coordinates.length} местоположения на картата`
+        //     });
 
-            this.addEventListener(mapButton, 'click', () => {
-                this.showCoordinatesOnMap(message.coordinates);
-            });
+        //     this.addEventListener(mapButton, 'click', () => {
+        //         this.showCoordinatesOnMap(message.coordinates);
+        //     });
 
-            mapButtonContainer.appendChild(mapButton);
-            messageDiv.appendChild(mapButtonContainer);
-        }
+        //     mapButtonContainer.appendChild(mapButton);
+        //     messageDiv.appendChild(mapButtonContainer);
+        // }
 
         return messageDiv;
     }

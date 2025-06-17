@@ -7,6 +7,7 @@ import BaseComponent from './components/BaseComponent.js';
 import ChatComponent from './components/ChatComponent.js';
 
 console.log('BaseComponent loaded:', BaseComponent.name);
+let appStateManager = new StateManager();
 // ============================================================================
 // APPLICATION MANAGER - Главен клас за управление
 // ============================================================================
@@ -448,6 +449,27 @@ showMultipleLocationsOnMap(coords) {
         return this.stateManager?.setState(path, value);
     }
 }
+
+appStateManager.subscribe('chat.lastCoordinates', (coords) => {
+    const btn = document.getElementById('show-chat-locations');
+    if (btn) {
+        if (coords && coords.length > 0) {
+            btn.style.display = '';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+});
+
+document.getElementById('show-chat-locations')?.addEventListener('click', () => {
+    const coords = stateManager.getState('chat.lastCoordinates');
+    if (coords && coords.length > 0) {
+        // Извикване на функцията за показване на маркери на картата
+        if (window.EcoTrailsApp && window.EcoTrailsApp.showMultipleLocationsOnMap) {
+            window.EcoTrailsApp.showMultipleLocationsOnMap(coords);
+        }
+    }
+});
 
 // ============================================================================
 // ИНИЦИАЛИЗАЦИЯ
